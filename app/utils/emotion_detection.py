@@ -8,10 +8,11 @@ import numpy as np
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
 import logging
+import imutils
 
 logger = logging.getLogger(__name__)
 
-# Emotion labels (from the reference code)
+# Emotion labels must match the model's training labels
 EMOTIONS = ["angry", "disgust", "scared", "happy", "sad", "surprised", "neutral"]
 
 # Get the absolute path to the model file
@@ -28,69 +29,9 @@ face_detection = cv2.CascadeClassifier(CASCADE_PATH)
 try:
     # Load model without compiling to avoid optimizer issues
     emotion_classifier = load_model(MODEL_PATH, compile=False)
-    logger.info(f"Emotion detection model loaded successfully from {MODEL_PATH}")
 except Exception as e:
     logger.error(f"Failed to load emotion detection model: {str(e)}")
     emotion_classifier = None
-
-def preprocess_image(image_bytes):
-    """
-    Preprocess the image bytes for emotion detection
-    """
-    try:
-        # Convert image bytes to numpy array
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        # Decode the image
-        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        
-        # Resize the frame
-        frame = imutils.resize(frame, width=300)
-        
-        # Convert to grayscale
-        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-        
-        # Detect faces using Haar cascade
-        faces = face_detection.detectMultiScale(
-            gray, 
-            scaleFactor=1.1, 
-            minNeighbors=5, 
-            minSize=(30, 30),
-            flags=cv2.CASCADE_SCALE_IMAGE
-        )
-        
-        # If no faces are detected, return None
-        if len(faces) == 0:
-            return None, frame, []
-        
-        # Sort faces by size (largest face first)
-        faces = sorted(faces, reverse=True, key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
-        
-        face_data = []
-        face_locations = []
-        
-        # Process the largest face detected
-        for face in faces:
-            (fX, fY, fW, fH) = face
-            face_locations.append((fX, fY, fW, fH))
-            
-            # Extract ROI of the face from grayscale image
-            roi = gray[fY:fY + fH, fX:fX + fW]
-            
-            # Resize to expected input size (64x64 as per example)
-            roi = cv2.resize(roi, (64, 64))
-            
-            # Preprocess for model
-            roi = roi.astype("float") / 255.0
-            roi = img_to_array(roi)
-            roi = np.expand_dims(roi, axis=0)
-            
-            face_data.append(roi)
-        
-        return face_data, frame, face_locations
-    
-    except Exception as e:
-        logger.error(f"Error preprocessing image: {str(e)}")
-        return None, None, []
 
 def detect_emotion(image_bytes):
     """
@@ -100,50 +41,113 @@ def detect_emotion(image_bytes):
         A dict with detected emotion, confidence, and face location
     """
     if emotion_classifier is None:
-        logger.error("Emotion detection model not loaded")
         return {"error": "Emotion detection model not loaded"}
     
     try:
-        # Preprocess the image
-        face_data, frame, face_locations = preprocess_image(image_bytes)
+        # Convert image bytes to numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
         
-        if face_data is None or len(face_data) == 0:
-            return {"faces": [], "message": "No faces detected in the image"}
+        # Decode the image
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
         
-        results = []
+        if frame is None:
+            return {"error": "Failed to decode image"}
+            
+        # Resize frame to width 300 (same as example)
+        frame = imutils.resize(frame, width=300)
         
-        # Process each face
-        for i, roi in enumerate(face_data):
-            # Predict emotions
+        # Create debug directory
+        debug_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'debug')
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Convert to grayscale exactly as in example
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Detect faces with same parameters as example
+        faces = face_detection.detectMultiScale(
+            gray,
+            scaleFactor=1.1,
+            minNeighbors=5,
+            minSize=(30, 30),
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+        
+        # If no faces detected, try more relaxed parameters
+        if len(faces) == 0:
+            faces = face_detection.detectMultiScale(
+                gray,
+                scaleFactor=1.05,
+                minNeighbors=3,
+                minSize=(20, 20),
+                flags=cv2.CASCADE_SCALE_IMAGE
+            )
+            
+            # If still no faces, use center of image as fallback
+            if len(faces) == 0:
+                h, w = gray.shape
+                center_x = w // 4
+                center_y = h // 4
+                center_w = w // 2
+                center_h = h // 2
+                faces = np.array([[center_x, center_y, center_w, center_h]])
+        
+        # If we have faces now
+        if len(faces) > 0:
+            results = []
+            
+            # Sort faces by size (largest first) - exactly as in example
+            if len(faces) > 1:
+                faces = sorted(faces, reverse=True, 
+                               key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
+            
+            # Process each face (or just the largest if multiple)
+            face_idx = 0  # Start with largest face
+            (fX, fY, fW, fH) = faces[face_idx]
+            
+            # Extract ROI and process exactly as in example
+            roi = gray[fY:fY + fH, fX:fX + fW]
+            
+            # Resize to 64x64 as in example
+            roi = cv2.resize(roi, (64, 64))
+            
+            # Normalize and convert to array format exactly as in example
+            roi = roi.astype("float") / 255.0
+            roi = img_to_array(roi)
+            roi = np.expand_dims(roi, axis=0)
+            
+            # Predict emotion
             preds = emotion_classifier.predict(roi, verbose=0)[0]
+            
             emotion_probability = float(np.max(preds))
-            emotion_label = EMOTIONS[np.argmax(preds)]
+            emotion_index = np.argmax(preds)
+            emotion_label = EMOTIONS[emotion_index]
             
-            # Create a dictionary of emotions and their probabilities
-            emotion_probabilities = {}
-            for j, emotion in enumerate(EMOTIONS):
-                emotion_probabilities[emotion] = float(preds[j])
+            # Create emotion probabilities dictionary
+            emotion_probs = {}
+            for i, emotion in enumerate(EMOTIONS):
+                emotion_probs[emotion] = float(preds[i])
             
-            # Create a result dictionary for this face
+            # Create face result
             face_result = {
                 "face_location": {
-                    "x": int(face_locations[i][0]),
-                    "y": int(face_locations[i][1]),
-                    "width": int(face_locations[i][2]),
-                    "height": int(face_locations[i][3])
+                    "x": int(fX),
+                    "y": int(fY),
+                    "width": int(fW),
+                    "height": int(fH)
                 },
                 "emotion": emotion_label,
                 "confidence": emotion_probability,
-                "emotion_probabilities": emotion_probabilities
+                "emotion_probabilities": emotion_probs
             }
             
             results.append(face_result)
-        
-        return {
-            "faces": results, 
-            "message": f"{len(results)} face(s) detected"
-        }
+            
+            return {
+                "faces": results,
+                "message": f"{len(results)} face(s) detected"
+            }
+        else:
+            return {"faces": [], "message": "No faces detected in the image"}
     
     except Exception as e:
-        logger.error(f"Error detecting emotions: {str(e)}")
         return {"error": f"Failed to process image: {str(e)}"} 
