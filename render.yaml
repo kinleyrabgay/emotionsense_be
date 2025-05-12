@@ -7,15 +7,6 @@ services:
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     plan: free
     healthCheckPath: /health
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.9.18
-      - key: DATABASE_URL
-        value: mongodb+srv://emotionsense:kzi114NkjwNkmCT1@cluster0.9ksw1oh.mongodb.net/emotionsense
-      - key: SECRET_KEY
-        generateValue: true
-      - key: ACCESS_TOKEN_EXPIRE_MINUTES
-        value: "1440"
 
 # Note: This application uses MongoDB Atlas instead of Render's PostgreSQL
 # You'll need to create a MongoDB Atlas account and update the DATABASE_URL
