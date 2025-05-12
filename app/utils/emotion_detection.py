@@ -8,7 +8,6 @@ import numpy as np
 from tensorflow.keras.models import load_model
 from tensorflow.keras.preprocessing.image import img_to_array
 import logging
-import imutils
 
 logger = logging.getLogger(__name__)
 

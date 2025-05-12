@@ -1,6 +1,8 @@
 from typing import List, Optional, Dict, Any
-from bson import ObjectId
+
 import logging
+
+from bson import ObjectId
 
 from app.database.database import db, USERS_COLLECTION
 from app.models.user import User, Emotion
