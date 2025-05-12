@@ -5,7 +5,7 @@ import os
 from dotenv import load_dotenv
 import logging
 
-from app.api.routes import auth, users, emotions, websockets
+from app.api.routes import auth, users, emotions, websockets, emotions_detection
 from app.database.database import create_tables, create_indexes, db, DB_NAME
 import asyncio
 
@@ -47,6 +47,7 @@ app.include_router(auth.router, prefix="/api/auth", tags=["Authentication"])
 app.include_router(users.router, prefix="/api", tags=["Users"])
 app.include_router(emotions.router, prefix="/api", tags=["Emotions"])
 app.include_router(websockets.router, prefix="/api", tags=["WebSockets"])
+app.include_router(emotions_detection.router, prefix="/api/emotion-detection", tags=["Emotion Detection"])
 
 @app.on_event("startup")
 async def startup_event():
@@ -145,6 +146,7 @@ async def root(request: Request):
                 <li>Emotion tracking and storage</li>
                 <li>RESTful API for emotion data access</li>
                 <li>MongoDB for efficient document storage</li>
+                <li>AI-powered emotion detection from images</li>
             </ul>
         </div>
         

@@ -1,78 +1,77 @@
-# Deploying Emotion Detection Backend to Render (Free Tier)
+# Deploying to Render
 
-This guide will walk you through deploying the Emotion Detection backend to Render's free tier.
+This guide will help you deploy the Emotion Detection API to [Render](https://render.com).
 
-## Prerequisites
+## Pre-requisites
 
-1. A GitHub account
-2. A Render account (sign up at [render.com](https://render.com) - no credit card required for free tier)
-3. Your project code ready to push to GitHub
+1. A Render account
+2. A MongoDB Atlas account (or other MongoDB provider)
+3. Your project code in a Git repository (GitHub, GitLab, etc.)
 
-## Setup Steps
+## Setup
 
-### 1. Push Your Code to GitHub
+### 1. MongoDB Atlas Setup
 
-First, ensure your code is in a GitHub repository:
+1. Create a MongoDB Atlas cluster if you don't have one
+2. Create a database named `emotionsense`
+3. Create a database user with read/write permissions
+4. Get your connection string from MongoDB Atlas:
+   ```
+   mongodb+srv://username:password@cluster.mongodb.net/emotionsense
+   ```
 
-```bash
-git init
-git add .
-git commit -m "Initial commit"
-git remote add origin <your-github-repo-url>
-git push -u origin main
-```
+### 2. Render Deployment
 
-### 2. Create a PostgreSQL Database on Render
+#### Option 1: Using the Dashboard
 
-1. Log in to [Render Dashboard](https://dashboard.render.com/)
-2. Click on **New** and select **PostgreSQL**
-3. Enter the following details:
-   - **Name**: `emotion-detection-db`
-   - **Plan**: Free
-   - Leave other settings as default
-
-4. Click **Create Database**
-5. Note the **Internal Database URL** for the next step
-
-### 3. Create a Web Service
-
-1. From the Render dashboard, click **New** and select **Web Service**
-2. Select **Build and deploy from a Git repository**
-3. Connect your GitHub repository
-4. Enter the following details:
-   - **Name**: `emotion-detection-api`
-   - **Runtime**: Python
+1. Log in to your Render dashboard
+2. Click "New" and select "Web Service"
+3. Connect your Git repository
+4. Configure the service:
+   - **Name**: `emotion-detection-api` (or your preferred name)
+   - **Runtime**: `Python`
    - **Build Command**: `bash build.sh`
    - **Start Command**: `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
    - **Plan**: Free
+   - **Health Check Path**: `/health`
+5. Add environment variables:
+   - `DATABASE_URL`: Your MongoDB connection string
+   - `SECRET_KEY`: A secret key for JWT token encryption
+   - `ACCESS_TOKEN_EXPIRE_MINUTES`: `1440` (or your preferred value)
+6. Click "Create Web Service"
 
-5. Add the following environment variables:
-   - `DATABASE_URL`: The Internal Database URL from your PostgreSQL service
-   - `SECRET_KEY`: [Generate a random string](https://passwordsgenerator.net/) or use Render's auto-generate feature
-   - `ACCESS_TOKEN_EXPIRE_MINUTES`: 1440
+#### Option 2: Using Blueprint (render.yaml)
 
-6. Click **Create Web Service**
+1. Log in to your Render dashboard
+2. Click "New" and select "Blueprint"
+3. Connect your Git repository
+4. Render will detect the `render.yaml` file and set up your services
+5. Provide the required environment variables when prompted
+6. Deploy your services
 
-### 4. Automatic Deployment from render.yaml
+## Verifying Deployment
 
-Alternatively, you can use the included `render.yaml` file for blueprint deployment:
+After deployment completes:
 
-1. From the Render dashboard, click **New** and select **Blueprint**
-2. Connect your GitHub repository
-3. Render will automatically detect the `render.yaml` file and set up the services
-4. Review the settings and click **Apply**
+1. Go to your Render dashboard and click on your web service
+2. Click on the URL to access your API
+3. Navigate to `/docs` to see the Swagger UI documentation
+4. Test the API endpoints to ensure everything is working properly
 
-### 5. Monitor Deployment
+## Troubleshooting
 
-1. Watch the deployment logs to ensure everything is set up correctly
-2. Once deployed, you can access your API at `https://emotion-detection-api.onrender.com`
-3. The API documentation will be available at `https://emotion-detection-api.onrender.com/docs`
+If you encounter issues:
 
-### 6. Test the API
+1. Check the Render logs for error messages
+2. Verify your MongoDB connection string is correct
+3. Ensure all environment variables are set properly
+4. Check the application logs for specific errors
 
-1. Use the Swagger documentation at `/docs` to test the API endpoints
-2. Try registering a user and logging in to verify authentication is working
-3. Test the WebSocket connection using a client like Postman or a custom Flutter app
+## Resources
+
+- [Render Documentation](https://render.com/docs)
+- [FastAPI Deployment Guide](https://fastapi.tiangolo.com/deployment/)
+- [MongoDB Atlas Documentation](https://docs.atlas.mongodb.com/)
 
 ## Important Notes About Free Tier
 

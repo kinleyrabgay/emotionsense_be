@@ -11,16 +11,12 @@ services:
       - key: PYTHON_VERSION
         value: 3.9.18
       - key: DATABASE_URL
-        fromDatabase:
-          name: emotion-detection-db
-          property: connectionString
+        value: mongodb+srv://emotionsense:kzi114NkjwNkmCT1@cluster0.9ksw1oh.mongodb.net/emotionsense
       - key: SECRET_KEY
         generateValue: true
       - key: ACCESS_TOKEN_EXPIRE_MINUTES
         value: "1440"
 
-databases:
-  # PostgreSQL database
-  - name: emotion-detection-db
-    plan: free
-    ipAllowList: []  # optional, IPs that can connect to this DB 
+# Note: This application uses MongoDB Atlas instead of Render's PostgreSQL
+# You'll need to create a MongoDB Atlas account and update the DATABASE_URL
+# with your actual connection string before deployment 
