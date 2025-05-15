@@ -35,11 +35,14 @@ app = FastAPI(
 # CORS Setup
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins
+    allow_origins=[
+        "http://localhost:3000",
+        "https://emotionsense.vercel.app"
+    ],
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods
-    allow_headers=["*"],  # Allow all headers
-    expose_headers=["*"]  # Expose all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"]
 )
 
 # Include routers
