@@ -5,8 +5,8 @@ from bson import ObjectId
 
 from app.core.security import get_current_active_user
 from app.database.database import db, USERS_COLLECTION
-from app.models.user import User, Emotion as UserEmotion
-from app.schemas.user import UserResponse, EmotionUpdate, Emotion
+from app.models.user import User, Emotion as UserEmotion, UserRole
+from app.schemas.user import UserResponse, EmotionUpdate, Emotion, UserUpdate
 from app.utils.websocket_manager import manager
 from app.services.user_service import UserService
 
@@ -32,6 +32,7 @@ async def read_users_me(current_user: User = Depends(get_current_active_user)):
                     "name": current_user.name,
                     "email": current_user.email,
                     "profile": current_user.profile,
+                    "role": current_user.role.value if isinstance(current_user.role, UserRole) else current_user.role,
                     "emotion": emotion_value.name if isinstance(emotion_value, UserEmotion) else None,
                     "created_at": current_user.created_at.isoformat() if hasattr(current_user, 'created_at') and current_user.created_at else None,
                     "updated_at": current_user.updated_at.isoformat() if hasattr(current_user, 'updated_at') and current_user.updated_at else None,
@@ -98,6 +99,7 @@ async def read_user(
                     "name": user.name,
                     "email": user.email,
                     "profile": user.profile,
+                    "role": user.role.value if isinstance(user.role, UserRole) else user.role,
                     "emotion": emotion_value.name if isinstance(emotion_value, UserEmotion) else None,
                     "created_at": user.created_at.isoformat() if hasattr(user, 'created_at') and user.created_at else None,
                     "updated_at": user.updated_at.isoformat() if hasattr(user, 'updated_at') and user.updated_at else None,
@@ -118,6 +120,89 @@ async def read_user(
             content={
                 "status": 500,
                 "message": f"Error getting user by ID: {str(e)}"
+            }
+        )
+
+
+@router.patch("/me", status_code=status.HTTP_200_OK)
+@router.put("/me", status_code=status.HTTP_200_OK)
+async def update_user_profile(
+    user_data: UserUpdate,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    Update the current user's profile
+    
+    Supports both PATCH and PUT methods for client compatibility
+    """
+    try:
+        # Prepare update data
+        update_data = {}
+        if user_data.name is not None:
+            update_data["name"] = user_data.name
+        if user_data.email is not None:
+            update_data["email"] = user_data.email
+        if user_data.profile is not None:
+            update_data["profile"] = user_data.profile
+        if user_data.role is not None:
+            # Only admins should be able to change roles in a real app
+            update_data["role"] = user_data.role.value
+        
+        # Update user in the database
+        success = await UserService.update_user(current_user.id, update_data)
+        if not success:
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={
+                    "status": 500,
+                    "message": "Failed to update user profile"
+                }
+            )
+        
+        # Get updated user
+        updated_user = await UserService.find_by_id(current_user.id)
+        if not updated_user:
+            return JSONResponse(
+                status_code=status.HTTP_404_NOT_FOUND,
+                content={
+                    "status": 404, 
+                    "message": "User not found after update"
+                }
+            )
+        
+        emotion_value = updated_user.current_emotion
+        
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "status": 200,
+                "message": "User profile updated successfully",
+                "data": {
+                    "id": updated_user.id,
+                    "name": updated_user.name,
+                    "email": updated_user.email,
+                    "profile": updated_user.profile,
+                    "role": updated_user.role.value if isinstance(updated_user.role, UserRole) else updated_user.role,
+                    "emotion": emotion_value.name if isinstance(emotion_value, UserEmotion) else None,
+                    "created_at": updated_user.created_at.isoformat() if hasattr(updated_user, 'created_at') and updated_user.created_at else None,
+                    "updated_at": updated_user.updated_at.isoformat() if hasattr(updated_user, 'updated_at') and updated_user.updated_at else None,
+                    "emotion_history": [
+                        {
+                            "emotion": entry.emotion.name if isinstance(entry.emotion, UserEmotion) else None,
+                            "timestamp": entry.timestamp.isoformat() if hasattr(entry, 'timestamp') and entry.timestamp else None
+                        } 
+                        for entry in updated_user.emotion_history
+                    ] if updated_user.emotion_history else []
+                }
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error updating user profile: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "status": 500,
+                "message": f"Error updating user profile: {str(e)}"
             }
         )
 
@@ -173,6 +258,7 @@ async def update_current_emotion(
                     "name": updated_user.name,
                     "email": updated_user.email,
                     "profile": updated_user.profile,
+                    "role": updated_user.role.value if isinstance(updated_user.role, UserRole) else updated_user.role,
                     "emotion": emotion_enum.name,
                     "created_at": updated_user.created_at.isoformat() if hasattr(updated_user, 'created_at') and updated_user.created_at else None,
                     "updated_at": updated_user.updated_at.isoformat() if hasattr(updated_user, 'updated_at') and updated_user.updated_at else None,

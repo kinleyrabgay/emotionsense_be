@@ -27,17 +27,21 @@ async def detect_emotions_in_image(
     file: UploadFile = File(None),
     image: UploadFile = File(None),
     request: Request = None,
+    user_id: str = None,
 ):
     """
     Detects emotions in the provided image.
     
     - **file** or **image**: An image file containing one or more faces
+    - Or JSON with base64 image data: {"image": "base64_encoded_image_data", "user_id": "user_id_string"}
+    - Optionally provide user_id to update user's emotion history
     
     Returns a JSON object with detected emotion and confidence.
     """
     try:
         # Get image bytes from the request
         image_bytes = None
+        received_user_id = user_id
         
         # Check if we have a file (try both field names)
         if image and image.filename:
@@ -45,10 +49,39 @@ async def detect_emotions_in_image(
         elif file and file.filename:
             image_bytes = await file.read()
         else:
-            # Try to read raw body data
-            body = await request.body()
-            if body:
-                image_bytes = body
+            # Try to read and parse JSON body
+            content_type = request.headers.get("content-type", "").lower()
+            if "application/json" in content_type:
+                try:
+                    json_data = await request.json()
+                    if "image" in json_data and json_data["image"]:
+                        # Handle base64 encoded image data
+                        base64_data = json_data["image"]
+                        
+                        # Remove data URL prefix if present
+                        if "base64," in base64_data:
+                            base64_data = base64_data.split("base64,")[1]
+                            
+                        import base64
+                        try:
+                            image_bytes = base64.b64decode(base64_data)
+                        except Exception as e:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Invalid base64 image data: {str(e)}"
+                            )
+                        
+                        # Check for user_id in JSON
+                        if not received_user_id and "user_id" in json_data:
+                            received_user_id = json_data["user_id"]
+                except ValueError:
+                    pass  # Not valid JSON
+            
+            # If JSON parsing failed, try to read raw body data
+            if not image_bytes:
+                body = await request.body()
+                if body:
+                    image_bytes = body
         
         # If we still don't have image data, return an error
         if not image_bytes:
@@ -67,28 +100,185 @@ async def detect_emotions_in_image(
                 detail=result["error"]
             )
         
+        current_time = datetime.utcnow().isoformat()
+        
         # Prepare response with just the essential information
         if "faces" in result and len(result["faces"]) > 0:
             face = result["faces"][0]  # Get the first face
+            emotion_name = face["emotion"]
+            
+            # Update user emotion history if user_id is provided
+            user_updated = False
+            if received_user_id:
+                from app.models.user import Emotion as UserEmotion
+                from app.services.user_service import UserService
+                try:
+                    # Get emotion enum from string
+                    emotion_enum = getattr(UserEmotion, emotion_name.upper(), None)
+                    if emotion_enum:
+                        # Update user's emotion history with confidence
+                        success = await UserService.update_emotion(received_user_id, emotion_enum, face["confidence"])
+                        user_updated = success
+                except Exception as e:
+                    # Log but don't fail the request
+                    logger.error(f"Error updating user emotion: {str(e)}")
+            
             response = {
-                "emotion": face["emotion"],
-                "confidence": face["confidence"]
+                "status": 200,
+                "message": "Emotion detected successfully",
+                "data": {
+                    "emotion": emotion_name,
+                    "confidence": face["confidence"],
+                    "timestamp": current_time,
+                    "user_updated": user_updated
+                }
             }
         else:
             response = {
-                "emotion": "no_face",
-                "confidence": 0.0
+                "status": 200,
+                "message": "No face detected in the image",
+                "data": {
+                    "emotion": "no_face",
+                    "confidence": 0.0,
+                    "timestamp": current_time,
+                    "user_updated": False
+                }
             }
             
-        return response
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content=response
+        )
         
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing request: {str(e)}"
         )
 
-@router.post("/simple-detect", response_description="Simple emotion detection for frontend testing")
+# @router.post("/simple-detect", response_description="Simple emotion detection for frontend testing")
+# async def simple_detect(
+#     file: UploadFile = File(...),
+# ):
+#     """
+#     Simple emotion detection endpoint specifically designed for frontend testing.
+#     It follows the example implementation closely to ensure compatibility.
+#     """
+#     try:
+#         # Read image bytes
+#         image_bytes = await file.read()
+        
+#         # Convert to numpy array
+#         nparr = np.frombuffer(image_bytes, np.uint8)
+#         frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+#         if frame is None:
+#             return JSONResponse(
+#                 status_code=status.HTTP_400_BAD_REQUEST,
+#                 content={"error": "Invalid image format"}
+#             )
+        
+#         # Save original for debug
+#         debug_dir = os.path.join(DEBUG_DIR, "simple_detect")
+#         os.makedirs(debug_dir, exist_ok=True)
+        
+#         # Process exactly like example code
+#         frame = imutils.resize(frame, width=300)
+#         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+#         # Use same cascade and parameters
+#         cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+#         face_detection = cv2.CascadeClassifier(cascade_path)
+        
+#         faces = face_detection.detectMultiScale(
+#             gray, 
+#             scaleFactor=1.1, 
+#             minNeighbors=5, 
+#             minSize=(30, 30), 
+#             flags=cv2.CASCADE_SCALE_IMAGE
+#         )
+        
+#         # If no face found, return no_face
+#         if len(faces) == 0:
+#             current_time = datetime.utcnow().isoformat()
+#             return JSONResponse(
+#                 status_code=status.HTTP_200_OK,
+#                 content={
+#                     "status": 200,
+#                     "message": "No face detected in the image",
+#                     "data": {
+#                         "emotion": "no_face",
+#                         "confidence": 0.0,
+#                         "timestamp": current_time
+#                     }
+#                 }
+#             )
+        
+#         # Sort faces by size (largest first)
+#         faces = sorted(faces, reverse=True, key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
+#         (fX, fY, fW, fH) = faces[0]
+        
+#         # Extract the ROI
+#         roi = gray[fY:fY + fH, fX:fX + fW]
+#         roi = cv2.resize(roi, (64, 64))
+        
+#         # Preprocess for model
+#         roi = roi.astype("float") / 255.0
+#         roi = img_to_array(roi)
+#         roi = np.expand_dims(roi, axis=0)
+        
+#         # Load model and predict
+#         model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+#                               'assets', 'model', 'model.hdf5')
+        
+#         if not os.path.exists(model_path):
+#             return JSONResponse(
+#                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#                 content={"error": f"Model file not found at {model_path}"}
+#             )
+        
+#         # Load the model and predict
+#         emotion_classifier = load_model(model_path, compile=False)
+#         preds = emotion_classifier.predict(roi, verbose=0)[0]
+        
+#         # Get emotion label and probability
+#         emotion_probability = float(np.max(preds))
+#         emotion_label = EMOTIONS[np.argmax(preds)]
+        
+#         # Create probabilities dictionary for visualization
+#         emotion_probs = {}
+#         for i, emotion in enumerate(EMOTIONS):
+#             emotion_probs[emotion] = float(preds[i])
+        
+#         # Return the result
+#         current_time = datetime.utcnow().isoformat()
+#         return JSONResponse(
+#             status_code=status.HTTP_200_OK,
+#             content={
+#                 "status": 200,
+#                 "message": "Emotion detected successfully",
+#                 "data": {
+#                     "emotion": emotion_label,
+#                     "confidence": emotion_probability,
+#                     "timestamp": current_time,
+#                     "all_emotions": emotion_probs,
+#                     "face_location": {
+#                         "x": int(fX),
+#                         "y": int(fY),
+#                         "width": int(fW),
+#                         "height": int(fH)
+#                     }
+#                 }
+#             }
+#         )
+        
+#     except Exception as e:
+#         return JSONResponse(
+#             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+#             content={"error": f"Failed to process image: {str(e)}"}
+#         )
 async def simple_detect(
     file: UploadFile = File(...),
 ):
@@ -132,12 +322,17 @@ async def simple_detect(
         
         # If no face found, return no_face
         if len(faces) == 0:
+            current_time = datetime.utcnow().isoformat()
             return JSONResponse(
                 status_code=status.HTTP_200_OK,
                 content={
-                    "emotion": "no_face",
-                    "confidence": 0.0,
-                    "message": "No faces detected"
+                    "status": 200,
+                    "message": "No face detected in the image",
+                    "data": {
+                        "emotion": "no_face",
+                        "confidence": 0.0,
+                        "timestamp": current_time
+                    }
                 }
             )
         
@@ -178,19 +373,144 @@ async def simple_detect(
             emotion_probs[emotion] = float(preds[i])
         
         # Return the result
+        current_time = datetime.utcnow().isoformat()
         return JSONResponse(
             status_code=status.HTTP_200_OK,
             content={
-                "emotion": emotion_label,
-                "confidence": emotion_probability,
-                "all_emotions": emotion_probs,
-                "face_location": {
-                    "x": int(fX),
-                    "y": int(fY),
-                    "width": int(fW),
-                    "height": int(fH)
-                },
-                "message": "Face detected and emotion classified"
+                "status": 200,
+                "message": "Emotion detected successfully",
+                "data": {
+                    "emotion": emotion_label,
+                    "confidence": emotion_probability,
+                    "timestamp": current_time,
+                    "all_emotions": emotion_probs,
+                    "face_location": {
+                        "x": int(fX),
+                        "y": int(fY),
+                        "width": int(fW),
+                        "height": int(fH)
+                    }
+                }
+            }
+        )
+        
+    except Exception as e:
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"error": f"Failed to process image: {str(e)}"}
+        )
+async def simple_detect(
+    file: UploadFile = File(...),
+):
+    """
+    Simple emotion detection endpoint specifically designed for frontend testing.
+    It follows the example implementation closely to ensure compatibility.
+    """
+    try:
+        # Read image bytes
+        image_bytes = await file.read()
+        
+        # Convert to numpy array
+        nparr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+        
+        if frame is None:
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"error": "Invalid image format"}
+            )
+        
+        # Save original for debug
+        debug_dir = os.path.join(DEBUG_DIR, "simple_detect")
+        os.makedirs(debug_dir, exist_ok=True)
+        
+        # Process exactly like example code
+        frame = imutils.resize(frame, width=300)
+        gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        
+        # Use same cascade and parameters
+        cascade_path = cv2.data.haarcascades + 'haarcascade_frontalface_default.xml'
+        face_detection = cv2.CascadeClassifier(cascade_path)
+        
+        faces = face_detection.detectMultiScale(
+            gray, 
+            scaleFactor=1.1, 
+            minNeighbors=5, 
+            minSize=(30, 30), 
+            flags=cv2.CASCADE_SCALE_IMAGE
+        )
+        
+        # If no face found, return no_face
+        if len(faces) == 0:
+            current_time = datetime.utcnow().isoformat()
+            return JSONResponse(
+                status_code=status.HTTP_200_OK,
+                content={
+                    "status": 200,
+                    "message": "No face detected in the image",
+                    "data": {
+                        "emotion": "no_face",
+                        "confidence": 0.0,
+                        "timestamp": current_time
+                    }
+                }
+            )
+        
+        # Sort faces by size (largest first)
+        faces = sorted(faces, reverse=True, key=lambda x: (x[2] - x[0]) * (x[3] - x[1]))
+        (fX, fY, fW, fH) = faces[0]
+        
+        # Extract the ROI
+        roi = gray[fY:fY + fH, fX:fX + fW]
+        roi = cv2.resize(roi, (64, 64))
+        
+        # Preprocess for model
+        roi = roi.astype("float") / 255.0
+        roi = img_to_array(roi)
+        roi = np.expand_dims(roi, axis=0)
+        
+        # Load model and predict
+        model_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), 
+                              'assets', 'model', 'model.hdf5')
+        
+        if not os.path.exists(model_path):
+            return JSONResponse(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content={"error": f"Model file not found at {model_path}"}
+            )
+        
+        # Load the model and predict
+        emotion_classifier = load_model(model_path, compile=False)
+        preds = emotion_classifier.predict(roi, verbose=0)[0]
+        
+        # Get emotion label and probability
+        emotion_probability = float(np.max(preds))
+        emotion_label = EMOTIONS[np.argmax(preds)]
+        
+        # Create probabilities dictionary for visualization
+        emotion_probs = {}
+        for i, emotion in enumerate(EMOTIONS):
+            emotion_probs[emotion] = float(preds[i])
+        
+        # Return the result
+        current_time = datetime.utcnow().isoformat()
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "status": 200,
+                "message": "Emotion detected successfully",
+                "data": {
+                    "emotion": emotion_label,
+                    "confidence": emotion_probability,
+                    "timestamp": current_time,
+                    "all_emotions": emotion_probs,
+                    "face_location": {
+                        "x": int(fX),
+                        "y": int(fY),
+                        "width": int(fW),
+                        "height": int(fH)
+                    }
+                }
             }
         )
         
@@ -376,17 +696,21 @@ async def detect_emotions_anonymous(
     file: UploadFile = File(None),
     image: UploadFile = File(None),
     request: Request = None,
+    user_id: str = None,
 ):
     """
     Detects emotions in the provided image without requiring authentication.
     
     - **file** or **image**: An image file containing one or more faces
+    - Or JSON with base64 image data: {"image": "base64_encoded_image_data", "user_id": "user_id_string"}
+    - Optionally provide user_id to update user's emotion history
     
     Returns a JSON object with detected emotion and confidence.
     """
     try:
         # Get image bytes from the request
         image_bytes = None
+        received_user_id = user_id
         
         # Check if we have a file (try both field names)
         if image and image.filename:
@@ -394,10 +718,39 @@ async def detect_emotions_anonymous(
         elif file and file.filename:
             image_bytes = await file.read()
         else:
-            # Try to read raw body data
-            body = await request.body()
-            if body:
-                image_bytes = body
+            # Try to read and parse JSON body
+            content_type = request.headers.get("content-type", "").lower()
+            if "application/json" in content_type:
+                try:
+                    json_data = await request.json()
+                    if "image" in json_data and json_data["image"]:
+                        # Handle base64 encoded image data
+                        base64_data = json_data["image"]
+                        
+                        # Remove data URL prefix if present
+                        if "base64," in base64_data:
+                            base64_data = base64_data.split("base64,")[1]
+                            
+                        import base64
+                        try:
+                            image_bytes = base64.b64decode(base64_data)
+                        except Exception as e:
+                            raise HTTPException(
+                                status_code=status.HTTP_400_BAD_REQUEST,
+                                detail=f"Invalid base64 image data: {str(e)}"
+                            )
+                        
+                        # Check for user_id in JSON
+                        if not received_user_id and "user_id" in json_data:
+                            received_user_id = json_data["user_id"]
+                except ValueError:
+                    pass  # Not valid JSON
+            
+            # If JSON parsing failed, try to read raw body data
+            if not image_bytes:
+                body = await request.body()
+                if body:
+                    image_bytes = body
         
         # If we still don't have image data, return an error
         if not image_bytes:
@@ -416,17 +769,49 @@ async def detect_emotions_anonymous(
                 detail=result["error"]
             )
         
+        current_time = datetime.utcnow().isoformat()
+        
         # Prepare response with just the essential information
         if "faces" in result and len(result["faces"]) > 0:
             face = result["faces"][0]  # Get the first face
+            emotion_name = face["emotion"]
+            
+            # Update user emotion history if user_id is provided
+            user_updated = False
+            if received_user_id:
+                from app.models.user import Emotion as UserEmotion
+                from app.services.user_service import UserService
+                try:
+                    # Get emotion enum from string
+                    emotion_enum = getattr(UserEmotion, emotion_name.upper(), None)
+                    if emotion_enum:
+                        # Update user's emotion history with confidence
+                        success = await UserService.update_emotion(received_user_id, emotion_enum, face["confidence"])
+                        user_updated = success
+                except Exception as e:
+                    # Log but don't fail the request
+                    logger.error(f"Error updating user emotion: {str(e)}")
+            
             response = {
-                "emotion": face["emotion"],
-                "confidence": face["confidence"]
+                "status": 200,
+                "message": "Emotion detected successfully",
+                "data": {
+                    "emotion": emotion_name,
+                    "confidence": face["confidence"],
+                    "timestamp": current_time,
+                    "user_updated": user_updated
+                }
             }
         else:
             response = {
-                "emotion": "no_face",
-                "confidence": 0.0
+                "status": 200,
+                "message": "No face detected in the image",
+                "data": {
+                    "emotion": "no_face",
+                    "confidence": 0.0,
+                    "timestamp": current_time,
+                    "user_updated": False
+                }
             }
         
         return JSONResponse(

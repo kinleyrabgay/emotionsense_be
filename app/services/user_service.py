@@ -74,8 +74,8 @@ class UserService:
             return False
             
     @staticmethod
-    async def update_emotion(user_id: str, emotion: Emotion) -> bool:
-        """Update user's current emotion and add to history"""
+    async def update_emotion(user_id: str, emotion: Emotion, confidence: float = 0.0) -> bool:
+        """Update user's current emotion and add to history with confidence level"""
         try:
             # Get the user
             user_data = await db[USERS_COLLECTION].find_one({"_id": ObjectId(user_id)})
@@ -84,8 +84,8 @@ class UserService:
                 
             user = User.from_dict(user_data)
             
-            # Create new emotion history entry
-            entry = user.add_emotion_history(emotion)
+            # Create new emotion history entry with confidence
+            entry = user.add_emotion_history(emotion, confidence)
             
             # Update the user
             result = await db[USERS_COLLECTION].update_one(

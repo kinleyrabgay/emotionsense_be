@@ -14,21 +14,24 @@ class UserRole(str, Enum):
     EMPLOYEE = "employee"
 
 class EmotionHistoryEntry:
-    def __init__(self, timestamp: datetime, emotion: Emotion):
+    def __init__(self, timestamp: datetime, emotion: Emotion, confidence: float = 0.0):
         self.timestamp = timestamp
         self.emotion = emotion
+        self.confidence = confidence
         
     def to_dict(self):
         return {
             "timestamp": self.timestamp,
-            "emotion": self.emotion.value if isinstance(self.emotion, Emotion) else self.emotion
+            "emotion": self.emotion.value if isinstance(self.emotion, Emotion) else self.emotion,
+            "confidence": self.confidence
         }
     
     @classmethod
     def from_dict(cls, data: Dict[str, Any]):
         return cls(
             timestamp=data.get("timestamp", datetime.utcnow()),
-            emotion=Emotion(data.get("emotion", Emotion.NEUTRAL.value))
+            emotion=Emotion(data.get("emotion", Emotion.NEUTRAL.value)),
+            confidence=data.get("confidence", 0.0)
         )
 
 class User:
@@ -113,9 +116,9 @@ class User:
             updated_at=data.get("updatedAt", datetime.utcnow())
         )
         
-    def add_emotion_history(self, emotion: Emotion):
-        """Add a new entry to the emotion history"""
-        entry = EmotionHistoryEntry(datetime.utcnow(), emotion)
+    def add_emotion_history(self, emotion: Emotion, confidence: float = 0.0):
+        """Add a new entry to the emotion history with confidence level"""
+        entry = EmotionHistoryEntry(datetime.utcnow(), emotion, confidence)
         self.emotion_history.append(entry)
         self.current_emotion = emotion
         self.updated_at = datetime.utcnow()

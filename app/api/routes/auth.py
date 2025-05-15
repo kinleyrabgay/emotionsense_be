@@ -13,7 +13,7 @@ from app.core.security import (
     get_current_active_user
 )
 from app.database.database import db, USERS_COLLECTION
-from app.models.user import User, Emotion as UserEmotion
+from app.models.user import User, Emotion as UserEmotion, UserRole
 from app.schemas.token import Token
 from app.schemas.user import UserCreate, UserResponse, UserLogin, Emotion
 from app.services.user_service import UserService
@@ -43,8 +43,8 @@ def validate_password(password: str) -> tuple[bool, str]:
     return True, ""
 
 
-def get_emotion_data(user: User):
-    """Get emotion data in a consistent format"""
+def get_user_data(user: User):
+    """Get user data in a consistent format"""
     emotion_value = user.current_emotion
     
     return {
@@ -52,13 +52,15 @@ def get_emotion_data(user: User):
         "name": user.name,
         "email": user.email,
         "profile": user.profile,
+        "role": user.role.value if isinstance(user.role, UserRole) else user.role,
         "emotion": emotion_value.name if isinstance(emotion_value, UserEmotion) else None,
         "created_at": user.created_at.isoformat() if isinstance(user.created_at, datetime) else user.created_at,
         "updated_at": user.updated_at.isoformat() if isinstance(user.updated_at, datetime) else user.updated_at,
         "emotion_history": [
             {
                 "emotion": entry.emotion.name if isinstance(entry.emotion, UserEmotion) else None,
-                "timestamp": entry.timestamp.isoformat() if isinstance(entry.timestamp, datetime) else entry.timestamp
+                "timestamp": entry.timestamp.isoformat() if isinstance(entry.timestamp, datetime) else entry.timestamp,
+                "confidence": entry.confidence
             } 
             for entry in user.emotion_history
         ] if user.emotion_history else []
@@ -115,7 +117,9 @@ async def register(user: UserCreate):
             content={
                 "status": 201,
                 "message": "User registered successfully",
-                "data": get_emotion_data(created_user)
+                "data": {
+                    "user": get_user_data(created_user)
+                }
             }
         )
     except Exception as e:
@@ -156,7 +160,7 @@ async def login(user_data: UserLogin):
                 "data": {
                     "access_token": access_token,
                     "token_type": "bearer",
-                    "user": get_emotion_data(user)
+                    "user": get_user_data(user)
                 }
             }
         )
@@ -185,53 +189,6 @@ async def login(user_data: UserLogin):
             }
         )
 
-
-@router.post("/token", status_code=status.HTTP_200_OK)
-async def login_for_token(form_data: OAuth2PasswordRequestForm = Depends()):
-    """Standard OAuth2 compatible login endpoint that takes form data - used by Swagger UI"""
-    try:
-        # Find user by email
-        user = await UserService.find_by_email(form_data.username)
-        if not user or not verify_password(form_data.password, user.password):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Incorrect email or password",
-                headers={"WWW-Authenticate": "Bearer"}
-            )
-        
-        # Create access token
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = create_access_token(
-            data={"sub": user.email}, expires_delta=access_token_expires
-        )
-        
-        # This response format is required for OAuth2 compatibility
-        return {"access_token": access_token, "token_type": "bearer"}
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error during token generation: {str(e)}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error during token generation: {str(e)}"
-        )
-
-
-@router.get("/user/me", status_code=status.HTTP_200_OK)
-async def read_users_me(current_user: User = Depends(get_current_active_user)):
-    """
-    Get current user profile (alternative endpoint path for client compatibility)
-    """
-    return JSONResponse(
-        status_code=status.HTTP_200_OK,
-        content={
-            "status": 200,
-            "message": "User profile retrieved successfully",
-            "data": get_emotion_data(current_user)
-        }
-    )
-
-
 @router.get("/me", status_code=status.HTTP_200_OK)
 async def get_current_user(current_user: User = Depends(get_current_active_user)):
     """
@@ -243,7 +200,7 @@ async def get_current_user(current_user: User = Depends(get_current_active_user)
             content={
                 "status": 200,
                 "message": "User profile retrieved successfully",
-                "data": get_emotion_data(current_user)
+                "data": get_user_data(current_user)
             }
         )
     except Exception as e:
@@ -295,4 +252,51 @@ async def logout():
         httponly=True
     )
     
-    return response 
+    return response
+
+
+@router.get("/users", status_code=status.HTTP_200_OK)
+async def get_all_users(current_user: User = Depends(get_current_active_user)):
+    """
+    Get all users in the system. Only accessible to admin users.
+    Returns an array of user information.
+    """
+    try:
+        # Check if the current user has admin role
+        if current_user.role != UserRole.ADMIN:
+            return JSONResponse(
+                status_code=status.HTTP_403_FORBIDDEN,
+                content={
+                    "status": 403,
+                    "message": "Only admin users can access this endpoint"
+                }
+            )
+            
+        # Fetch all users from the database
+        cursor = db[USERS_COLLECTION].find({})
+        users = await cursor.to_list(length=100)  # Limit to 100 users for performance
+        
+        # Transform the user data
+        user_list = []
+        for user_data in users:
+            user = User.from_dict(user_data)
+            if user:
+                user_list.append(get_user_data(user))
+        
+        return JSONResponse(
+            status_code=status.HTTP_200_OK,
+            content={
+                "status": 200,
+                "message": "Users retrieved successfully",
+                "data": user_list
+            }
+        )
+    except Exception as e:
+        logger.error(f"Error retrieving users: {str(e)}")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={
+                "status": 500,
+                "message": f"Error retrieving users: {str(e)}"
+            }
+        ) 
